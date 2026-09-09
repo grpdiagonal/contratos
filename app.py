@@ -152,12 +152,12 @@ def puxar_fornecedores():
 
 def formata_qualificacao(forn):
     """Monta a qualificação jurídica do fornecedor."""
-    razao = forn.get("razao_social") or forn.get("nome", "")
-    endereco = forn.get("endereco", "[ENDEREÇO A INFORMAR]")
-    cnpj = forn.get("cnpj", "[CNPJ A INFORMAR]")
-    rep = forn.get("representante_legal", "[REPRESENTANTE A INFORMAR]")
-    rg = forn.get("rg", "[RG A INFORMAR]")
-    cpf = forn.get("cpf", "[CPF A INFORMAR]")
+    razao = forn.get("razao_social") or forn.get("nome") or ""
+    endereco = forn.get("endereco") or "[ENDEREÇO A INFORMAR]"
+    cnpj = forn.get("cnpj") or "[CNPJ A INFORMAR]"
+    rep = forn.get("representante_legal") or "[REPRESENTANTE A INFORMAR]"
+    rg = forn.get("rg") or "[RG A INFORMAR]"
+    cpf = forn.get("cpf") or "[CPF A INFORMAR]"
     
     return (
         f", com sede em {endereco}, inscrita no CNPJ sob o número {cnpj}, "
@@ -207,9 +207,9 @@ if not fornecedores:
 
 # Separar aptos e bloqueados
 aptos = [f for f in fornecedores 
-         if f.get("status_qualificacao", "").lower() == "qualificado"]
+         if (f.get("status_qualificacao") or "").lower() == "qualificado"]
 bloqueados = [f for f in fornecedores 
-              if f.get("status_qualificacao", "").lower() != "qualificado"]
+              if (f.get("status_qualificacao") or "").lower() != "qualificado"]
 
 st.markdown(f"""
 <div class="metadata">
@@ -241,7 +241,7 @@ with tab_contrato:
         if spe:
             st.info(f"""
             **{spe['nome']}**
-            CNPJ: {spe.get('cnpj', '—')}
+            CNPJ: {spe.get('cnpj') or '—'}
             """)
     
     with col2:
@@ -266,8 +266,8 @@ with tab_contrato:
             if proj:
                 st.info(f"""
                 **{proj['nome']}**
-                CNPJ: {proj.get('cnpj', '—')}
-                Validade: {proj.get('validade_qualificacao', '—')}
+                CNPJ: {proj.get('cnpj') or '—'}
+                Validade: {proj.get('validade_qualificacao') or '—'}
                 """)
     
     st.divider()
@@ -442,16 +442,16 @@ with tab_inspeccionar:
             with st.expander(f"✅ {forn['nome']}", expanded=False):
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.write(f"**CNPJ**: {forn.get('cnpj', '—')}")
-                    st.write(f"**Representante**: {forn.get('representante_legal', '—')}")
-                    st.write(f"**CPF**: {forn.get('cpf', '—')}")
-                    st.write(f"**RG**: {forn.get('rg', '—')}")
+                    st.write(f"**CNPJ**: {forn.get('cnpj') or '—'}")
+                    st.write(f"**Representante**: {forn.get('representante_legal') or '—'}")
+                    st.write(f"**CPF**: {forn.get('cpf') or '—'}")
+                    st.write(f"**RG**: {forn.get('rg') or '—'}")
                 with col2:
-                    st.write(f"**E-mail**: {forn.get('email', '—')}")
-                    st.write(f"**Telefone**: {forn.get('telefone', '—')}")
-                    st.write(f"**Validade**: {forn.get('validade_qualificacao', '—')}")
+                    st.write(f"**E-mail**: {forn.get('email') or '—'}")
+                    st.write(f"**Telefone**: {forn.get('telefone') or '—'}")
+                    st.write(f"**Validade**: {forn.get('validade_qualificacao') or '—'}")
                 
-                st.text_area("Endereço:", value=forn.get("endereco", ""), disabled=True, height=60)
+                st.text_area("Endereço:", value=forn.get("endereco") or "", disabled=True, height=60)
     
     st.divider()
     
@@ -459,11 +459,11 @@ with tab_inspeccionar:
         st.subheader(f"Fornecedores Bloqueados ({len(bloqueados)})")
         
         for forn in sorted(bloqueados, key=lambda f: f["nome"] or ""):
-            motivo = f"Status: {forn.get('status_qualificacao', 'não informado')}"
+            motivo = f"Status: {forn.get('status_qualificacao') or 'não informado'}"
             with st.expander(f"🚫 {forn['nome']} · {motivo}", expanded=False):
-                st.write(f"**CNPJ**: {forn.get('cnpj', '—')}")
-                st.write(f"**Status da Qualificação**: {forn.get('status_qualificacao', '—')}")
-                st.write(f"**Validade**: {forn.get('validade_qualificacao', '—')}")
+                st.write(f"**CNPJ**: {forn.get('cnpj') or '—'}")
+                st.write(f"**Status da Qualificação**: {forn.get('status_qualificacao') or '—'}")
+                st.write(f"**Validade**: {forn.get('validade_qualificacao') or '—'}")
     
     else:
         st.info("Todos os fornecedores estão qualificados! ✓")
