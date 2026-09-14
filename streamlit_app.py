@@ -415,16 +415,16 @@ if not fornecedores:
     st.error("Nenhum fornecedor encontrado — verifique o token e o Database ID.")
     st.stop()
 
-# Separar aptos (qualificado + validade vigente) e bloqueados
+# Separar aptos e bloqueados
+# Qualificado = apto independente de validade (campo pode estar vazio no Notion)
 aptos = [
     f for f in fornecedores
     if (f.get("status_qualificacao") or "").strip().lower() == "qualificado"
-    and _validade_ok(f.get("validade_qualificacao"))
 ]
+# Aptos com validade expirada (subconjunto de aptos para exibição na aba de inspeção)
 aptos_sem_validade = [
-    f for f in fornecedores
-    if (f.get("status_qualificacao") or "").strip().lower() == "qualificado"
-    and not _validade_ok(f.get("validade_qualificacao"))
+    f for f in aptos
+    if f.get("validade_qualificacao") and not _validade_ok(f.get("validade_qualificacao"))
 ]
 bloqueados = [
     f for f in fornecedores
