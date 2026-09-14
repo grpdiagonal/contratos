@@ -82,6 +82,9 @@ def _get_prop(props, name, prop_type="rich_text"):
         elif prop_type == "select":
             sel = prop.get("select")
             return sel.get("name") if sel else None
+        elif prop_type == "status":
+            sel = prop.get("status")
+            return sel.get("name") if sel else None
         elif prop_type == "multi_select":
             return [item["name"] for item in prop.get("multi_select", [])]
         elif prop_type == "date":
@@ -103,10 +106,10 @@ def _page_to_fornecedor(page):
         "responsavel_tecnico":   G("Nome do Responsável Técnico"),
         "projeta_bim":           G("Projeta em BIM?", "checkbox"),
         "data_cadastro":         G("Data de Cadastro", "date"),
-        "status_qualificacao":   G("Status da Qualificação", "select"),
+        "status_qualificacao":   G("Status da Qualificação", "status"),
         "data_qualificacao":     G("Data de Qualificação", "date"),
         "validade_qualificacao": G("Validade da Qualificação", "date"),
-        "status_geral":          G("Status Geral", "select"),
+        "status_geral":          G("Status Geral", "status"),
         "crea_cau":              G("CREA/CAU"),
         "cnpj":                  G("CNPJ"),
         "email":                 G("E-mail"),
