@@ -484,15 +484,10 @@ with tab_contrato:
     with col_np:
         num_parcelas = st.number_input("Quantas parcelas?", min_value=1, max_value=10, value=3)
 
-    # Cabeçalho
-    hc = st.columns([2, 5, 3])
-    hc[0].markdown("**Percentual (%)**")
-    hc[1].markdown("**Etapa**")
-    hc[2].markdown("**Valor calculado**")
-
+    # Passo 1: coleta percentuais e etapas (sem exibir valores ainda)
     pcts, etapas = [], []
     for i in range(int(num_parcelas)):
-        c1, c2, c3 = st.columns([2, 5, 3])
+        c1, c2 = st.columns([2, 5])
         with c1:
             pct = st.number_input(
                 f"pct_{i}", min_value=0.0, max_value=100.0,
@@ -504,14 +499,6 @@ with tab_contrato:
                 f"etapa_{i}", value=f"Parcela {i+1}",
                 key=f"etapa_{i}", label_visibility="collapsed",
             )
-        with c3:
-            if valor_total > 0:
-                vc = round(valor_total * pct / 100.0, 2)
-                st.text_input(f"val_{i}", value=brl(vc), disabled=True,
-                              key=f"val_d_{i}", label_visibility="collapsed")
-            else:
-                st.text_input(f"val_{i}", value="", placeholder="—", disabled=True,
-                              key=f"val_d_{i}", label_visibility="collapsed")
         pcts.append(pct)
         etapas.append(etapa)
 
@@ -519,7 +506,7 @@ with tab_contrato:
     if abs(soma_pct - 100.0) > 0.1:
         st.warning(f"⚠️ Percentuais somam {soma_pct:.2f}%, não 100 %")
 
-    # Monta lista de parcelas para o script
+    # Passo 2: calcula todos os valores e monta lista de parcelas
     parcelas = []
     if valor_total > 0:
         acc = []
@@ -530,6 +517,18 @@ with tab_contrato:
             acc.append(vc)
             parcelas.append({"pct": f"{pct:.2f}%".replace(".", ","), "etapa": etapa,
                              "valor": f"{vc:.2f}".replace(".", ",")})
+
+        # Passo 3: exibe tabela de valores calculados
+        st.markdown("**Resumo das parcelas:**")
+        hc = st.columns([2, 5, 3])
+        hc[0].markdown("**%**")
+        hc[1].markdown("**Etapa**")
+        hc[2].markdown("**Valor**")
+        for i, p in enumerate(parcelas):
+            lc = st.columns([2, 5, 3])
+            lc[0].write(p["pct"])
+            lc[1].write(p["etapa"])
+            lc[2].write(brl(float(p["valor"].replace(",", "."))))
     else:
         for pct, etapa in zip(pcts, etapas):
             parcelas.append({"pct": f"{pct:.2f}%".replace(".", ","), "etapa": etapa, "valor": ""})
