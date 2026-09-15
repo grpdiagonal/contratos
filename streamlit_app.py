@@ -20,8 +20,9 @@ except ImportError:
 # CONFIG
 # ============================================================================
 
-NOTION_TOKEN = st.secrets.get("NOTION_TOKEN") or os.getenv("NOTION_TOKEN")
-DATABASE_ID  = st.secrets.get("DATABASE_ID")  or os.getenv("DATABASE_ID")
+NOTION_TOKEN          = st.secrets.get("NOTION_TOKEN")          or os.getenv("NOTION_TOKEN")
+DATABASE_ID           = st.secrets.get("DATABASE_ID")           or os.getenv("DATABASE_ID")
+DATABASE_ID_COLIGADAS = st.secrets.get("DATABASE_ID_COLIGADAS") or os.getenv("DATABASE_ID_COLIGADAS") or "3dc3a59439718073ae51f0e831f0b425"
 
 if not NOTION_TOKEN or not DATABASE_ID:
     st.error("""
@@ -92,6 +93,8 @@ def _get_prop(props, name, prop_type="rich_text"):
             return val.get("start")
         elif prop_type == "checkbox":
             return prop.get("checkbox", False)
+        elif prop_type == "number":
+            return prop.get("number")
     except Exception:
         return None
     return None
@@ -114,56 +117,59 @@ def _page_to_fornecedor(page):
         "cnpj":                  G("CNPJ"),
         "email":                 G("E-mail"),
         "telefone":              G("Telefone"),
-        "contato":               G("CONTATO"),
-        "razao_social":          G("RAZÃO SOCIAL"),
-        "representante_legal":   G("REPRESENTANTE LEGAL"),
+        "contato":               G("CONTATO") or G("Contato"),
+        "razao_social":          G("RAZÃO SOCIAL") or G("Razão Social"),
+        "representante_legal":   G("REPRESENTANTE LEGAL") or G("Representante Legal"),
         "cpf":                   G("CPF"),
         "rg":                    G("RG"),
-        "endereco":              G("ENDEREÇO"),
-        "disciplinas":           G("DISCIPLINA", "multi_select"),
+        "endereco":              G("ENDEREÇO") or G("Endereço"),
+        "disciplinas":           G("DISCIPLINA", "multi_select") or G("Disciplina", "multi_select"),
         "status_documento":      G("Status do Documento", "select"),
         "referencias":           G("Referências"),
-        "estrutura_empresa":     G("Estrutura da Empresa"),
-        "portfolio":             G("Portfólio, RG/CPF Comprovante"),
     }
 
 
-@st.cache_data(ttl=3600)
-def puxar_fornecedores():
-    """
-    Puxa todos os fornecedores do Notion com paginação segura.
-    Exibe progresso na tela para que o app nunca pareça travado.
-    """
-    MAX_PAGES = 50   # proteção: no máximo 50 × 100 = 5 000 registros
+def _page_to_coligada(page):
+    props = page["properties"]
+    G = lambda name, t="rich_text": _get_prop(props, name, t)
+    return {
+        "id":           page["id"],
+        "codigo":       G("Código", "number"),
+        "nome":         G("Nome Coligada", "title"),
+        "nome_obra":    G("Nome da Obra"),
+        "cnpj":         G("CNPJ"),
+        "endereco":     G("Endereço"),
+    }
+
+
+def _paginar_notion(database_id, label="registros"):
+    """Puxa todos os registros de um banco Notion com paginação segura."""
+    MAX_PAGES = 50
     results   = []
     cursor    = None
     pagina    = 0
-
     progresso = st.empty()
 
     try:
         while pagina < MAX_PAGES:
             pagina += 1
-            progresso.caption(f"⏳ Carregando página {pagina} do Notion…")
+            progresso.caption(f"⏳ Carregando {label} — página {pagina}…")
 
             params = {"page_size": 100}
             if cursor:
                 params["start_cursor"] = cursor
 
             try:
-                resp = notion.databases.query(DATABASE_ID, **params)
+                resp = notion.databases.query(database_id, **params)
             except APIResponseError as e:
                 progresso.empty()
-                st.error(f"Erro na API do Notion: {e}")
+                st.error(f"Erro na API do Notion ({label}): {e}")
                 return []
 
-            batch = resp.get("results", [])
-            results.extend(batch)
+            results.extend(resp.get("results", []))
+            has_more = resp.get("has_more", False)
+            cursor   = resp.get("next_cursor")
 
-            has_more   = resp.get("has_more", False)
-            cursor     = resp.get("next_cursor")
-
-            # Sai quando não há mais páginas OU quando o cursor é nulo
             if not has_more or not cursor:
                 break
 
@@ -171,23 +177,41 @@ def puxar_fornecedores():
 
     except Exception as e:
         progresso.empty()
-        st.error(f"Erro inesperado ao conectar com Notion: {e}")
+        st.error(f"Erro inesperado ao conectar com Notion ({label}): {e}")
         return []
 
-    fornecedores = []
-    for page in results:
-        try:
-            forn = _page_to_fornecedor(page)
-            if forn["nome"]:
-                fornecedores.append(forn)
-        except Exception:
-            pass   # registro malformado: ignora sem travar
+    return results
 
-    return fornecedores
+
+@st.cache_data(ttl=3600)
+def puxar_fornecedores():
+    pages = _paginar_notion(DATABASE_ID, "fornecedores")
+    result = []
+    for page in pages:
+        try:
+            f = _page_to_fornecedor(page)
+            if f["nome"]:
+                result.append(f)
+        except Exception:
+            pass
+    return result
+
+
+@st.cache_data(ttl=3600)
+def puxar_coligadas():
+    pages = _paginar_notion(DATABASE_ID_COLIGADAS, "coligadas")
+    result = []
+    for page in pages:
+        try:
+            c = _page_to_coligada(page)
+            if c["nome"]:
+                result.append(c)
+        except Exception:
+            pass
+    return sorted(result, key=lambda x: x.get("codigo") or 999)
 
 
 def _validade_ok(data_str):
-    """Retorna True se a data de validade ainda não expirou."""
     if not data_str:
         return False
     try:
@@ -196,15 +220,24 @@ def _validade_ok(data_str):
         return False
 
 
-def formata_qualificacao(forn):
-    """Monta a qualificação jurídica do fornecedor para o contrato."""
-    razao    = forn.get("razao_social") or forn.get("nome", "")
-    endereco = forn.get("endereco")     or "[ENDEREÇO A INFORMAR]"
-    cnpj     = forn.get("cnpj")         or "[CNPJ A INFORMAR]"
-    rep      = forn.get("representante_legal") or "[REPRESENTANTE A INFORMAR]"
-    rg       = forn.get("rg")           or "[RG A INFORMAR]"
-    cpf      = forn.get("cpf")          or "[CPF A INFORMAR]"
+def formata_qualificacao_spe(col):
+    """Qualificação da SPE/contratante — formato do template real."""
+    nome     = col.get("nome", "")
+    endereco = col.get("endereco") or "[ENDEREÇO A INFORMAR]"
+    cnpj     = col.get("cnpj")    or "[CNPJ A INFORMAR]"
+    return (
+        f" com sede em {endereco}, inscrita no CNPJ sob o número {cnpj}, "
+        f"neste ato representado pelo seu gerente/delegado abaixo assinado;"
+    )
 
+
+def formata_qualificacao_fornecedor(forn):
+    """Qualificação do fornecedor/contratada — inclui representante legal."""
+    endereco = forn.get("endereco")           or "[ENDEREÇO A INFORMAR]"
+    cnpj     = forn.get("cnpj")               or "[CNPJ A INFORMAR]"
+    rep      = forn.get("representante_legal") or "[REPRESENTANTE A INFORMAR]"
+    rg       = forn.get("rg")                 or "[RG A INFORMAR]"
+    cpf      = forn.get("cpf")                or "[CPF A INFORMAR]"
     return (
         f", com sede em {endereco}, inscrita no CNPJ sob o número {cnpj}, "
         f"neste ato representada legalmente e na forma estatutária pelo(a) "
@@ -213,20 +246,19 @@ def formata_qualificacao(forn):
 
 
 # --------------------------------------------------------------------------
-# Valor por extenso — versão completa em PT-BR, suporta centavos
+# Valor por extenso
 # --------------------------------------------------------------------------
 
-_UNIDADES   = ["", "um", "dois", "três", "quatro", "cinco", "seis", "sete",
-                "oito", "nove", "dez", "onze", "doze", "treze", "quatorze",
-                "quinze", "dezesseis", "dezessete", "dezoito", "dezenove"]
-_DEZENAS    = ["", "", "vinte", "trinta", "quarenta", "cinquenta",
-                "sessenta", "setenta", "oitenta", "noventa"]
-_CENTENAS   = ["", "cem", "duzentos", "trezentos", "quatrocentos", "quinhentos",
-                "seiscentos", "setecentos", "oitocentos", "novecentos"]
+_UNIDADES = ["", "um", "dois", "três", "quatro", "cinco", "seis", "sete",
+             "oito", "nove", "dez", "onze", "doze", "treze", "quatorze",
+             "quinze", "dezesseis", "dezessete", "dezoito", "dezenove"]
+_DEZENAS  = ["", "", "vinte", "trinta", "quarenta", "cinquenta",
+             "sessenta", "setenta", "oitenta", "noventa"]
+_CENTENAS = ["", "cem", "duzentos", "trezentos", "quatrocentos", "quinhentos",
+             "seiscentos", "setecentos", "oitocentos", "novecentos"]
 
 
 def _centenas_ext(n: int) -> str:
-    """Converte inteiro 1–999 por extenso."""
     if n == 100:
         return "cem"
     c, resto = divmod(n, 100)
@@ -244,21 +276,9 @@ def _centenas_ext(n: int) -> str:
     return " e ".join(partes)
 
 
-def _grupo(n: int, singular: str, plural: str) -> str:
-    return f"{_centenas_ext(n)} {plural if n != 1 else singular}"
-
-
 def numero_extenso(valor_str: str) -> str:
-    """Converte uma string de valor BRL para extenso em PT-BR.
-
-    Exemplos:
-        "132.000,00"  → "cento e trinta e dois mil reais"
-        "1.500,50"    → "um mil e quinhentos reais e cinquenta centavos"
-        "100,01"      → "cem reais e um centavo"
-    """
     try:
         limpo = str(valor_str).replace("R$", "").replace(" ", "")
-        # normaliza: ponto de milhar + vírgula decimal  →  int_str, dec_str
         if "," in limpo:
             partes = limpo.replace(".", "").split(",")
             int_str, dec_str = partes[0], (partes[1] + "00")[:2]
@@ -272,7 +292,6 @@ def numero_extenso(valor_str: str) -> str:
             return "zero"
 
         partes_ext = []
-
         if inteiro > 0:
             bilhoes, resto = divmod(inteiro, 1_000_000_000)
             milhoes, resto = divmod(resto,   1_000_000)
@@ -280,21 +299,23 @@ def numero_extenso(valor_str: str) -> str:
             unid           = resto
 
             if bilhoes:
-                partes_ext.append(_grupo(bilhoes, "bilhão", "bilhões"))
+                b_ext = _centenas_ext(bilhoes)
+                partes_ext.append(f"{b_ext} {'bilhão' if bilhoes == 1 else 'bilhões'}")
             if milhoes:
-                partes_ext.append(_grupo(milhoes, "milhão", "milhões"))
+                m_ext = _centenas_ext(milhoes)
+                partes_ext.append(f"{m_ext} {'milhão' if milhoes == 1 else 'milhões'}")
             if mil:
                 partes_ext.append(f"{_centenas_ext(mil)} mil")
             if unid:
                 partes_ext.append(_centenas_ext(unid))
 
-            reais_ext = " e ".join(partes_ext)
+            reais_ext  = " e ".join(partes_ext)
             reais_ext += " real" if inteiro == 1 else " reais"
         else:
             reais_ext = ""
 
         if centavos > 0:
-            cent_ext = _centenas_ext(centavos)
+            cent_ext  = _centenas_ext(centavos)
             cent_ext += " centavo" if centavos == 1 else " centavos"
         else:
             cent_ext = ""
@@ -312,10 +333,6 @@ def numero_extenso(valor_str: str) -> str:
 # --------------------------------------------------------------------------
 
 def _localizar_script():
-    """
-    Procura preencher_contrato.py em locais prováveis.
-    Retorna o caminho absoluto ou None.
-    """
     candidatos = [
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "preencher_contrato.py"),
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts", "preencher_contrato.py"),
@@ -328,10 +345,6 @@ def _localizar_script():
 
 
 def _localizar_assets():
-    """
-    Procura o diretório assets (que contém template_contrato.docx,
-    row_first.xml, row_cont.xml) em locais prováveis.
-    """
     base = os.path.dirname(os.path.abspath(__file__))
     candidatos = [
         os.path.join(base, "assets"),
@@ -344,25 +357,17 @@ def _localizar_assets():
     return None
 
 
-def gerar_docx(dados: dict) -> tuple[bytes | None, str]:
-    """
-    Chama preencher_contrato.py e devolve (bytes_do_docx, mensagem_erro).
-    Em caso de sucesso, mensagem_erro é string vazia.
-    """
+def gerar_docx(dados: dict) -> tuple:
     script = _localizar_script()
     if script is None:
-        return None, (
-            "preencher_contrato.py não encontrado. Coloque-o na raiz do repositório "
-            "ou em ./scripts/."
-        )
+        return None, "preencher_contrato.py não encontrado."
 
     assets = _localizar_assets()
     if assets is None:
-        return None, (
-            "Pasta de assets não encontrada. Certifique-se de que template_contrato.docx, "
-            "row_first.xml e row_cont.xml estão em ./assets/ (ou na raiz do repositório)."
-        )
+        return None, "Pasta de assets não encontrada."
 
+    json_path = ""
+    docx_path = ""
     try:
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".json", delete=False, encoding="utf-8"
@@ -394,7 +399,7 @@ def gerar_docx(dados: dict) -> tuple[bytes | None, str]:
     finally:
         for p in (json_path, docx_path):
             try:
-                if os.path.exists(p):
+                if p and os.path.exists(p):
                     os.unlink(p)
             except Exception:
                 pass
@@ -408,23 +413,25 @@ st.title("VICTA · Montador de Contratos")
 st.markdown("Gere contratos de forma rápida e confiável.")
 
 # --------------------------------------------------------------------------
-# Carregar fornecedores
+# Carregar dados
 # --------------------------------------------------------------------------
 
 with st.spinner("Conectando ao Notion…"):
     fornecedores = puxar_fornecedores()
+    coligadas    = puxar_coligadas()
 
 if not fornecedores:
     st.error("Nenhum fornecedor encontrado — verifique o token e o Database ID.")
     st.stop()
 
-# Separar aptos e bloqueados
-# Qualificado = apto independente de validade (campo pode estar vazio no Notion)
+if not coligadas:
+    st.warning("⚠️ Nenhuma coligada encontrada — verifique o DATABASE_ID_COLIGADAS e a conexão da integração.")
+
+# Separar fornecedores aptos e bloqueados
 aptos = [
     f for f in fornecedores
     if (f.get("status_qualificacao") or "").strip().lower() == "qualificado"
 ]
-# Aptos com validade expirada (subconjunto de aptos para exibição na aba de inspeção)
 aptos_sem_validade = [
     f for f in aptos
     if f.get("validade_qualificacao") and not _validade_ok(f.get("validade_qualificacao"))
@@ -437,7 +444,7 @@ bloqueados = [
 st.markdown(f"""
 <div class="metadata">
 🔄 Cadastro sincronizado do Notion ·
-{len(aptos)} aptos · {len(aptos_sem_validade)} com validade expirada · {len(bloqueados)} bloqueados
+{len(coligadas)} coligadas · {len(aptos)} fornecedores aptos · {len(bloqueados)} bloqueados
 </div>
 """, unsafe_allow_html=True)
 
@@ -453,71 +460,81 @@ tab_contrato, tab_inspecionar = st.tabs(["📝 Novo Contrato", "🔍 Inspecionar
 
 with tab_contrato:
 
-    # --- 1. Partes ---
     col1, col2 = st.columns(2)
 
+    # --- SPE / Contratante (coligadas) ---
     with col1:
-        st.subheader("1. Partes do Contrato")
+        st.subheader("1. Contratante (SPE)")
 
-        nomes_aptos = sorted(f["nome"] for f in aptos)
-        nome_spe = st.selectbox(
-            "SPE / Contratante",
-            options=nomes_aptos,
-            help="Apenas cadastros com qualificação vigente aparecem aqui.",
+        # Label: "Código — Nome da Obra (Nome Coligada)"
+        def label_coligada(c):
+            cod  = c.get("codigo") or "—"
+            obra = c.get("nome_obra") or c.get("nome") or "—"
+            nome = c.get("nome") or ""
+            return f"{cod} · {obra}" + (f" ({nome})" if nome and nome != obra else "")
+
+        opcoes_col = {label_coligada(c): c for c in coligadas}
+        nome_col   = st.selectbox(
+            "SPE / Coligada",
+            options=["— selecione —"] + list(opcoes_col.keys()),
         )
-        spe = next((f for f in aptos if f["nome"] == nome_spe), None)
+        col_selecionada = opcoes_col.get(nome_col)
 
-        if spe:
-            val = spe.get("validade_qualificacao") or "—"
-            st.info(f"**{spe['nome']}**  \nCNPJ: {spe.get('cnpj') or '—'}  \nValidade: {val}")
+        if col_selecionada:
+            st.info(
+                f"**{col_selecionada['nome']}**  \n"
+                f"CNPJ: {col_selecionada.get('cnpj') or '—'}  \n"
+                f"Obra: {col_selecionada.get('nome_obra') or '—'}"
+            )
+            if not col_selecionada.get("endereco"):
+                st.warning("⚠️ Endereço não preenchido nesta coligada.")
 
-        # Campos com informação faltando
-        if spe:
-            faltando_spe = [c for c in ("cnpj", "endereco", "representante_legal", "cpf", "rg")
-                            if not spe.get(c)]
-            if faltando_spe:
-                st.warning(f"⚠️ Dados incompletos na SPE: {', '.join(faltando_spe)}")
-
+    # --- Tipo e Projetista ---
     with col2:
-        st.subheader("2. Tipo de Documento")
+        st.subheader("2. Tipo e Contratada")
         tipo = st.radio(
             "Tipo",
             ["BIM", "P2D", "DISTRATO"],
             horizontal=True,
-            help="BIM inclui Anexo 3 (BIM); P2D termina no Anexo 2.",
         )
 
         if tipo != "DISTRATO":
-            nome_proj = st.selectbox(
+            nomes_aptos = sorted(f["nome"] for f in aptos)
+            nome_proj   = st.selectbox(
                 "Projetista / Contratada",
                 options=["— selecione —"] + nomes_aptos,
-                key="proj",
             )
             proj = next((f for f in aptos if f["nome"] == nome_proj), None)
 
             if proj:
                 val = proj.get("validade_qualificacao") or "—"
-                st.info(f"**{proj['nome']}**  \nCNPJ: {proj.get('cnpj') or '—'}  \nValidade: {val}")
-                faltando_proj = [c for c in ("cnpj", "endereco", "representante_legal", "cpf", "rg")
-                                 if not proj.get(c)]
-                if faltando_proj:
-                    st.warning(f"⚠️ Dados incompletos no projetista: {', '.join(faltando_proj)}")
+                st.info(
+                    f"**{proj['nome']}**  \n"
+                    f"CNPJ: {proj.get('cnpj') or '—'}  \n"
+                    f"Validade: {val}"
+                )
+                faltando = [c for c in ("cnpj", "endereco", "representante_legal", "cpf", "rg")
+                            if not proj.get(c)]
+                if faltando:
+                    st.warning(f"⚠️ Dados incompletos: {', '.join(faltando)}")
         else:
             proj = None
 
     st.divider()
 
-    # --- 2. Dados do contrato ---
+    # --- Dados do contrato ---
     col1, col2 = st.columns(2)
     with col1:
         num_contrato  = st.text_input("Nº do contrato", placeholder="2026.09.09")
         data_contrato = st.date_input("Data", value=date.today())
     with col2:
-        if tipo == "DISTRATO":
-            data_original = st.date_input("Data do contrato original", value=date.today())
         objeto = st.text_input("Objeto/Serviço", placeholder="PROJETO EXECUTIVO DE ARQUITETURA – BIM")
 
-    obra  = st.text_input("Obra", placeholder="Nome do empreendimento")
+    obra  = st.text_input(
+        "Obra",
+        value=col_selecionada.get("nome_obra") if col_selecionada else "",
+        placeholder="Nome do empreendimento",
+    )
     local = st.text_area("Local da obra", placeholder="Endereço completo", height=60)
 
     valor_total_str = st.text_input("Valor total (R$)", placeholder="132.000,00")
@@ -534,13 +551,16 @@ with tab_contrato:
 
     st.divider()
 
-    # --- 3. Parcelas ---
+    # --- Parcelas ---
     st.subheader("3. Parcelas")
     num_parcelas = st.number_input("Quantas parcelas?", min_value=1, max_value=10, value=3)
 
     parcelas = []
+    pcts  = []
+    etapas = []
+
     for i in range(int(num_parcelas)):
-        c1, c2, c3 = st.columns(3)
+        c1, c2 = st.columns([1, 2])
         with c1:
             pct = st.number_input(
                 f"Parcela {i+1} (%)", min_value=0.0, max_value=100.0,
@@ -548,26 +568,53 @@ with tab_contrato:
             )
         with c2:
             etapa = st.text_input(f"Etapa {i+1}", value=f"Parcela {i+1}", key=f"etapa_{i}")
-        with c3:
-            valor_parc = st.text_input(
-                f"Valor {i+1} (R$)", value="", placeholder="calculado automaticamente",
-                key=f"valor_{i}",
-            )
-        parcelas.append({
-            "pct":   f"{pct:.2f}%".replace(".", ","),
-            "etapa": etapa,
-            "valor": valor_parc,
-        })
+        pcts.append(pct)
+        etapas.append(etapa)
 
-    soma_pct = sum(
-        float(p["pct"].replace("%", "").replace(",", ".")) for p in parcelas
-    )
+    soma_pct = sum(pcts)
     if abs(soma_pct - 100.0) > 0.1:
         st.warning(f"⚠️ Percentuais somam {soma_pct:.2f}%, não 100 %")
 
+    # Calcula e exibe valores automaticamente quando o total está preenchido
+    if valor_total > 0:
+        st.markdown("**Valores calculados:**")
+        cabecalho = st.columns([1, 2, 2])
+        cabecalho[0].markdown("**Parcela**")
+        cabecalho[1].markdown("**Etapa**")
+        cabecalho[2].markdown("**Valor (R$)**")
+
+        valores_calc = []
+        for i, (pct, etapa) in enumerate(zip(pcts, etapas)):
+            valor_calc = round(valor_total * pct / 100.0, 2)
+            # ajusta centavos na última parcela
+            if i == len(pcts) - 1:
+                soma_ate_aqui = sum(valores_calc)
+                valor_calc = round(valor_total - soma_ate_aqui, 2)
+            valores_calc.append(valor_calc)
+
+            linha = st.columns([1, 2, 2])
+            linha[0].write(f"{i+1} · {pct:.2f}%")
+            linha[1].write(etapa)
+            linha[2].write(f"R$ {valor_calc:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+
+        for i, (pct, etapa, valor_calc) in enumerate(zip(pcts, etapas, valores_calc)):
+            parcelas.append({
+                "pct":   f"{pct:.2f}%".replace(".", ","),
+                "etapa": etapa,
+                "valor": f"{valor_calc:.2f}".replace(".", ","),
+            })
+    else:
+        # sem valor total: passa sem valor para o script calcular
+        for pct, etapa in zip(pcts, etapas):
+            parcelas.append({
+                "pct":   f"{pct:.2f}%".replace(".", ","),
+                "etapa": etapa,
+                "valor": "",
+            })
+
     st.divider()
 
-    # --- 4. Escopo ---
+    # --- Escopo ---
     st.subheader("4. Escopo (Anexo 1)")
     num_itens = st.number_input("Quantos itens de escopo?", min_value=1, max_value=10, value=3)
 
@@ -586,8 +633,8 @@ with tab_contrato:
     if st.button("Gerar Contrato", type="primary", use_container_width=True):
 
         erros = []
-        if not spe:
-            erros.append("Escolha uma SPE")
+        if not col_selecionada:
+            erros.append("Escolha uma SPE/Coligada")
         if tipo != "DISTRATO" and not proj:
             erros.append("Escolha um projetista")
         if not objeto:
@@ -602,24 +649,26 @@ with tab_contrato:
         if erros:
             st.error("Não é possível gerar:\n" + "\n".join(f"• {e}" for e in erros))
         else:
+            nome_contratante = col_selecionada["nome"] if col_selecionada else "—"
+            qual_contratante = formata_qualificacao_spe(col_selecionada) if col_selecionada else ""
+
             dados = {
                 "tipo":        tipo,
                 "num_contrato": num_contrato,
                 "data":        data_contrato.strftime("%d/%m/%Y"),
                 "contratante": {
-                    "nome":          spe["nome"],
-                    "qualificacao":  formata_qualificacao(spe),
+                    "nome":         nome_contratante,
+                    "qualificacao": qual_contratante,
                 },
                 "contratada": {
                     "nome":         proj["nome"] if proj else "—",
-                    "qualificacao": formata_qualificacao(proj) if proj else "",
+                    "qualificacao": formata_qualificacao_fornecedor(proj) if proj else "",
                 },
-                "obra":               obra or spe["nome"],
+                "obra":               obra or (col_selecionada.get("nome_obra") if col_selecionada else ""),
                 "servico":            objeto,
                 "objeto_nome":        objeto,
                 "objeto_complemento": (
-                    f", para a obra {obra or spe['nome']}, situada na {local}."
-                    if local else "."
+                    f", para a obra {obra}, situada na {local}." if local else "."
                 ),
                 "valor_num":     valor_total_str,
                 "valor_extenso": numero_extenso(valor_total_str),
@@ -637,10 +686,7 @@ with tab_contrato:
                     label="📥 Baixar contrato (.docx)",
                     data=docx_bytes,
                     file_name=nome_arquivo,
-                    mime=(
-                        "application/vnd.openxmlformats-officedocument"
-                        ".wordprocessingml.document"
-                    ),
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     use_container_width=True,
                 )
                 st.download_button(
@@ -657,6 +703,24 @@ with tab_contrato:
 # ============================================================================
 
 with tab_inspecionar:
+
+    st.subheader(f"Coligadas / SPEs ({len(coligadas)})")
+    if coligadas:
+        for c in coligadas:
+            cod  = c.get("codigo") or "—"
+            obra = c.get("nome_obra") or "—"
+            with st.expander(f"🏢 {cod} · {c['nome']} — {obra}", expanded=False):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write(f"**CNPJ**: {c.get('cnpj') or '—'}")
+                with col2:
+                    st.write(f"**Obra**: {obra}")
+                st.text_area(
+                    "Endereço:", value=c.get("endereco") or "", disabled=True, height=60,
+                    key=f"end_col_{c['id']}",
+                )
+
+    st.divider()
 
     st.subheader(f"Fornecedores Aptos ({len(aptos)})")
     if aptos:
@@ -681,15 +745,6 @@ with tab_inspecionar:
 
     st.divider()
 
-    if aptos_sem_validade:
-        st.subheader(f"Qualificados com Validade Expirada ({len(aptos_sem_validade)})")
-        for forn in sorted(aptos_sem_validade, key=lambda f: f["nome"] or ""):
-            val = forn.get("validade_qualificacao") or "—"
-            with st.expander(f"⏰ {forn['nome']} · expirou em {val}", expanded=False):
-                st.write(f"**CNPJ**: {forn.get('cnpj') or '—'}")
-                st.write(f"**Validade**: {val}")
-        st.divider()
-
     if bloqueados:
         st.subheader(f"Bloqueados / Não Qualificados ({len(bloqueados)})")
         for forn in sorted(bloqueados, key=lambda f: f["nome"] or ""):
@@ -697,9 +752,6 @@ with tab_inspecionar:
             with st.expander(f"🚫 {forn['nome']} · {motivo}", expanded=False):
                 st.write(f"**CNPJ**: {forn.get('cnpj') or '—'}")
                 st.write(f"**Status**: {motivo}")
-                st.write(f"**Validade**: {forn.get('validade_qualificacao') or '—'}")
-    else:
-        st.info("Todos os fornecedores estão qualificados! ✓")
 
     st.divider()
     if st.button("🔄 Recarregar dados do Notion"):
