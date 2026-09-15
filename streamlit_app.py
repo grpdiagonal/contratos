@@ -529,6 +529,14 @@ with tab_contrato:
             lc[0].write(p["pct"])
             lc[1].write(p["etapa"])
             lc[2].write(brl(float(p["valor"].replace(",", "."))))
+
+        # Rodapé com totais
+        st.markdown("---")
+        rc = st.columns([2, 5, 3])
+        soma_icon = "✅" if abs(soma_pct - 100.0) <= 0.1 else "❌"
+        rc[0].markdown(f"**{soma_pct:.2f}% {soma_icon}**")
+        rc[1].markdown("**Total**")
+        rc[2].markdown(f"**{brl(valor_total)}**")
     else:
         for pct, etapa in zip(pcts, etapas):
             parcelas.append({"pct": f"{pct:.2f}%".replace(".", ","), "etapa": etapa, "valor": ""})
