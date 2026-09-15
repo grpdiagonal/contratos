@@ -119,10 +119,10 @@ def _page_to_fornecedor(page):
         "telefone":              G("Telefone"),
         "contato":               G("CONTATO") or G("Contato"),
         "razao_social":          G("RAZÃO SOCIAL") or G("Razão Social"),
-        "representante_legal":   G("REPRESENTANTE LEGAL") or G("Representante Legal"),
+        "representante_legal":   G("REPRESENTANTE LEGAL") or G("Representante Legal") or G("Nome do Responsável Técnico"),
         "cpf":                   G("CPF"),
         "rg":                    G("RG"),
-        "endereco":              G("ENDEREÇO") or G("Endereço"),
+        "endereco":              G("ENDEREÇO") or G("Endereço") or G("Endereco") or G("endereço"),
         "disciplinas":           G("DISCIPLINA", "multi_select") or G("Disciplina", "multi_select"),
         "status_documento":      G("Status do Documento", "select"),
         "referencias":           G("Referências"),
@@ -430,7 +430,7 @@ if not coligadas:
 # Separar fornecedores aptos e bloqueados
 aptos = [
     f for f in fornecedores
-    if (f.get("status_qualificacao") or "").strip().lower() == "qualificado"
+    if (f.get("status_qualificacao") or "").strip().lower() != "não qualificado"
 ]
 aptos_sem_validade = [
     f for f in aptos
@@ -438,13 +438,13 @@ aptos_sem_validade = [
 ]
 bloqueados = [
     f for f in fornecedores
-    if (f.get("status_qualificacao") or "").strip().lower() != "qualificado"
+    if (f.get("status_qualificacao") or "").strip().lower() == "não qualificado"
 ]
 
 st.markdown(f"""
 <div class="metadata">
 🔄 Cadastro sincronizado do Notion ·
-{len(coligadas)} coligadas · {len(aptos)} fornecedores aptos · {len(bloqueados)} bloqueados
+{len(coligadas)} coligadas · {len(aptos)} fornecedores disponíveis · {len(bloqueados)} bloqueados
 </div>
 """, unsafe_allow_html=True)
 
@@ -722,7 +722,7 @@ with tab_inspecionar:
 
     st.divider()
 
-    st.subheader(f"Fornecedores Aptos ({len(aptos)})")
+    st.subheader(f"Fornecedores Disponíveis ({len(aptos)})")
     if aptos:
         for forn in sorted(aptos, key=lambda f: f["nome"] or ""):
             with st.expander(f"✅ {forn['nome']}", expanded=False):
