@@ -686,20 +686,24 @@ with tab_inspecionar:
 with tab_anexos:
     st.subheader("Montar PDF Final")
     st.markdown(
-        "Faça upload do contrato revisado (**.docx**) e dos anexos em PDF. "
-        "O app converte o contrato para PDF e mescla tudo em um único arquivo."
+        "Faça upload do contrato em PDF e dos anexos. "
+        "O app mescla tudo em um único arquivo na ordem definida."
+    )
+    st.info(
+        "💡 Para converter o contrato .docx em PDF: abra no Word → "
+        "Arquivo → Salvar como → PDF. Depois faça o upload aqui."
     )
 
     st.divider()
 
-    # Upload do contrato revisado
     col1, col2 = st.columns([1, 1])
     with col1:
-        st.markdown("**1. Contrato revisado (.docx)**")
-        docx_upload = st.file_uploader(
-            "Contrato revisado",
-            type=["docx"],
+        st.markdown("**1. Contrato em PDF**")
+        contrato_pdf = st.file_uploader(
+            "Contrato PDF",
+            type=["pdf"],
             label_visibility="collapsed",
+            key="contrato_pdf",
         )
     with col2:
         st.markdown("**2. Anexos em PDF** (um ou mais, na ordem desejada)")
@@ -708,103 +712,54 @@ with tab_anexos:
             type=["pdf"],
             accept_multiple_files=True,
             label_visibility="collapsed",
+            key="anexos_pdf",
         )
 
-    if docx_upload or pdfs_upload:
+    todos = ([contrato_pdf] if contrato_pdf else []) + (pdfs_upload or [])
+
+    if todos:
         st.divider()
         st.markdown("**Ordem dos documentos no PDF final:**")
-
-        arquivos = []
-        if docx_upload:
-            st.write(f"1. 📄 {docx_upload.name} ← contrato (será convertido para PDF)")
-            arquivos.append(("docx", docx_upload))
-        for i, pdf in enumerate(pdfs_upload or []):
-            num = len(arquivos) + 1
-            st.write(f"{num}. 📎 {pdf.name}")
-            arquivos.append(("pdf", pdf))
+        for i, f in enumerate(todos):
+            icone = "📄" if i == 0 and contrato_pdf else "📎"
+            st.write(f"{i+1}. {icone} {f.name}")
 
     st.divider()
 
     if st.button("⚡ Gerar PDF Final", type="primary", use_container_width=True,
-                 disabled=not docx_upload):
+                 disabled=not todos):
 
-        if not docx_upload:
-            st.error("Faça upload do contrato .docx para continuar.")
+        if not todos:
+            st.error("Faça upload de pelo menos um PDF.")
         else:
-            with st.spinner("Convertendo e mesclando…"):
-
-                erros_pdf = []
-                tmp_dir   = tempfile.mkdtemp()
-                pdf_partes = []
-
-                # 1. Salva o .docx e converte com LibreOffice
-                try:
-                    docx_path = os.path.join(tmp_dir, docx_upload.name)
-                    with open(docx_path, "wb") as f:
-                        f.write(docx_upload.read())
-
-                    result = subprocess.run(
-                        ["libreoffice", "--headless", "--convert-to", "pdf",
-                         "--outdir", tmp_dir, docx_path],
-                        capture_output=True, text=True, timeout=120,
-                    )
-
-                    pdf_convertido = docx_path.replace(".docx", ".pdf")
-                    if os.path.exists(pdf_convertido):
-                        pdf_partes.append(pdf_convertido)
-                    else:
-                        erros_pdf.append(
-                            f"Falha ao converter {docx_upload.name}: {result.stderr[:300]}"
-                        )
-                except subprocess.TimeoutExpired:
-                    erros_pdf.append("Timeout na conversão do .docx (>120 s).")
-                except Exception as e:
-                    erros_pdf.append(f"Erro ao converter .docx: {e}")
-
-                # 2. Salva os PDFs de anexo
-                for i, pdf_file in enumerate(pdfs_upload or []):
-                    try:
-                        pdf_path = os.path.join(tmp_dir, f"anexo_{i:02d}_{pdf_file.name}")
-                        with open(pdf_path, "wb") as f:
-                            f.write(pdf_file.read())
-                        pdf_partes.append(pdf_path)
-                    except Exception as e:
-                        erros_pdf.append(f"Erro ao salvar {pdf_file.name}: {e}")
-
-                # 3. Mescla todos os PDFs
+            with st.spinner("Mesclando PDFs…"):
+                erros_pdf      = []
                 pdf_final_bytes = None
-                if pdf_partes and not erros_pdf:
-                    try:
-                        writer = PdfWriter()
-                        for parte in pdf_partes:
-                            reader = PdfReader(parte)
+                try:
+                    writer = PdfWriter()
+                    for arq in todos:
+                        try:
+                            reader = PdfReader(arq)
                             for page in reader.pages:
                                 writer.add_page(page)
-                        buf = tempfile.NamedTemporaryFile(
-                            suffix=".pdf", delete=False, dir=tmp_dir
-                        )
-                        writer.write(buf)
-                        buf.close()
-                        with open(buf.name, "rb") as f:
-                            pdf_final_bytes = f.read()
-                    except Exception as e:
-                        erros_pdf.append(f"Erro ao mesclar PDFs: {e}")
+                        except Exception as e:
+                            erros_pdf.append(f"Erro em {arq.name}: {e}")
 
-                # 4. Limpeza
-                try:
-                    import shutil
-                    shutil.rmtree(tmp_dir, ignore_errors=True)
-                except Exception:
-                    pass
+                    if not erros_pdf:
+                        import io
+                        buf = io.BytesIO()
+                        writer.write(buf)
+                        pdf_final_bytes = buf.getvalue()
+                except Exception as e:
+                    erros_pdf.append(f"Erro ao mesclar: {e}")
 
             if erros_pdf:
                 for e in erros_pdf:
                     st.error(e)
             elif pdf_final_bytes:
-                nome_base = docx_upload.name.replace(".docx", "")
-                st.success(
-                    f"✅ PDF gerado com {len(pdf_partes)} documento(s) mesclado(s)."
-                )
+                nome_base = (contrato_pdf.name.replace(".pdf", "") if contrato_pdf
+                             else "documento")
+                st.success(f"✅ PDF gerado com {len(todos)} documento(s) mesclado(s).")
                 st.download_button(
                     label="📥 Baixar PDF Final",
                     data=pdf_final_bytes,
